@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'screens/comptes_page.dart';
 
 void main() {
   runApp(const GestionnaireBudgetApp());
@@ -34,7 +35,7 @@ class _MainPageState extends State<MainPage> {
 
   final List<Widget> _pages = const [
     AccueilPage(),
-    PageVide(titre: 'Comptes', icone: Icons.account_balance_wallet_outlined),
+    ComptesPage(),
     PageVide(titre: 'Budgets', icone: Icons.pie_chart_outline),
     PageVide(titre: 'Profil', icone: Icons.person_outline),
   ];
