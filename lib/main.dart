@@ -1,8 +1,25 @@
 import 'package:flutter/material.dart';
+
+import 'database/app_database.dart';
+import 'models/compte.dart';
 import 'screens/comptes_page.dart';
 
 void main() {
   runApp(const GestionnaireBudgetApp());
+}
+
+String formatXpf(int montant) {
+  final texte = montant.abs().toString();
+  final buffer = StringBuffer();
+
+  for (int i = 0; i < texte.length; i++) {
+    if (i > 0 && (texte.length - i) % 3 == 0) {
+      buffer.write(' ');
+    }
+    buffer.write(texte[i]);
+  }
+
+  return '${montant < 0 ? '-' : ''}${buffer.toString()} XPF';
 }
 
 class GestionnaireBudgetApp extends StatelessWidget {
@@ -32,24 +49,34 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   int _pageIndex = 0;
+  int _actualisation = 0;
 
-  final List<Widget> _pages = const [
-    AccueilPage(),
-    ComptesPage(),
-    PageVide(titre: 'Budgets', icone: Icons.pie_chart_outline),
-    PageVide(titre: 'Profil', icone: Icons.person_outline),
-  ];
+  void actualiser() {
+    setState(() {
+      _actualisation++;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: _pages[_pageIndex],
+    final pages = [
+      AccueilPage(key: ValueKey(_actualisation)),
+      ComptesPage(onChanged: actualiser),
+      const PageVide(titre: 'Budgets', icone: Icons.pie_chart_outline),
+      const PageVide(titre: 'Profil', icone: Icons.person_outline),
+    ];
 
+    return Scaffold(
+      body: pages[_pageIndex],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _pageIndex,
         onDestinationSelected: (index) {
           setState(() {
             _pageIndex = index;
+
+            if (index == 0) {
+              _actualisation++;
+            }
           });
         },
         destinations: const [
@@ -72,7 +99,6 @@ class _MainPageState extends State<MainPage> {
           ),
         ],
       ),
-
       floatingActionButton: _pageIndex == 0
           ? FloatingActionButton.extended(
               onPressed: () {},
@@ -84,12 +110,43 @@ class _MainPageState extends State<MainPage> {
   }
 }
 
-// ======================================================
-// ACCUEIL
-// ======================================================
-
-class AccueilPage extends StatelessWidget {
+class AccueilPage extends StatefulWidget {
   const AccueilPage({super.key});
+
+  @override
+  State<AccueilPage> createState() => _AccueilPageState();
+}
+
+class _AccueilPageState extends State<AccueilPage> {
+  int soldeCourant = 0;
+  int totalEpargne = 0;
+  bool chargement = true;
+
+  @override
+  void initState() {
+    super.initState();
+    chargerSoldes();
+  }
+
+  Future<void> chargerSoldes() async {
+    final comptes = await AppDatabase.instance.obtenirComptes();
+
+    final courant = comptes
+        .where((c) => c.type == TypeCompte.courant)
+        .fold<int>(0, (total, compte) => total + compte.solde);
+
+    final epargne = comptes
+        .where((c) => c.type == TypeCompte.epargne)
+        .fold<int>(0, (total, compte) => total + compte.solde);
+
+    if (!mounted) return;
+
+    setState(() {
+      soldeCourant = courant;
+      totalEpargne = epargne;
+      chargement = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -103,17 +160,13 @@ class AccueilPage extends StatelessWidget {
               context,
             ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
-
           const SizedBox(height: 4),
-
           const Text(
             'Août 2026',
             style: TextStyle(fontSize: 16, color: Colors.black54),
           ),
-
           const SizedBox(height: 24),
 
-          // ARGENT LIBRE
           Card(
             elevation: 0,
             child: Padding(
@@ -125,18 +178,14 @@ class AccueilPage extends StatelessWidget {
                     'ARGENT LIBRE',
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
-
                   const SizedBox(height: 10),
-
                   Text(
-                    '0 XPF',
+                    formatXpf(soldeCourant),
                     style: Theme.of(context).textTheme.displaySmall?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-
                   const SizedBox(height: 8),
-
                   const Text(
                     "Somme réellement disponible jusqu'au prochain salaire",
                     style: TextStyle(color: Colors.black54),
@@ -148,23 +197,20 @@ class AccueilPage extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          // SOLDES
-          const Row(
+          Row(
             children: [
               Expanded(
                 child: ResumeCarte(
                   titre: 'Solde courant',
-                  valeur: '0 XPF',
+                  valeur: chargement ? '...' : formatXpf(soldeCourant),
                   icone: Icons.account_balance,
                 ),
               ),
-
-              SizedBox(width: 12),
-
+              const SizedBox(width: 12),
               Expanded(
                 child: ResumeCarte(
                   titre: 'Épargnes',
-                  valeur: '0 XPF',
+                  valeur: chargement ? '...' : formatXpf(totalEpargne),
                   icone: Icons.savings_outlined,
                 ),
               ),
@@ -179,19 +225,16 @@ class AccueilPage extends StatelessWidget {
               context,
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
           ),
-
           const SizedBox(height: 10),
 
           const LigneReservee(
             titre: 'Charges fixes restantes',
             montant: '0 XPF',
           ),
-
           const LigneReservee(
             titre: 'Budgets restant à consommer',
             montant: '0 XPF',
           ),
-
           const LigneReservee(titre: 'Épargne programmée', montant: '0 XPF'),
 
           const SizedBox(height: 28),
@@ -202,7 +245,6 @@ class AccueilPage extends StatelessWidget {
               context,
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
           ),
-
           const SizedBox(height: 10),
 
           const Card(
@@ -217,10 +259,6 @@ class AccueilPage extends StatelessWidget {
     );
   }
 }
-
-// ======================================================
-// PETITES CARTES SOLDES
-// ======================================================
 
 class ResumeCarte extends StatelessWidget {
   final String titre;
@@ -244,13 +282,9 @@ class ResumeCarte extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(icone),
-
             const SizedBox(height: 14),
-
             Text(titre, style: const TextStyle(color: Colors.black54)),
-
             const SizedBox(height: 5),
-
             Text(
               valeur,
               style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
@@ -261,10 +295,6 @@ class ResumeCarte extends StatelessWidget {
     );
   }
 }
-
-// ======================================================
-// ARGENT RÉSERVÉ
-// ======================================================
 
 class LigneReservee extends StatelessWidget {
   final String titre;
@@ -287,10 +317,6 @@ class LigneReservee extends StatelessWidget {
   }
 }
 
-// ======================================================
-// PAGES EN CONSTRUCTION
-// ======================================================
-
 class PageVide extends StatelessWidget {
   final String titre;
   final IconData icone;
@@ -305,18 +331,14 @@ class PageVide extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icone, size: 55),
-
             const SizedBox(height: 15),
-
             Text(
               titre,
               style: Theme.of(
                 context,
               ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
-
             const SizedBox(height: 8),
-
             const Text('Module en cours de développement'),
           ],
         ),
