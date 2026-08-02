@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'database/app_database.dart';
 import 'models/compte.dart';
 import 'screens/comptes_page.dart';
+import 'screens/budgets_page.dart';
 
 void main() {
   runApp(const GestionnaireBudgetApp());
@@ -62,7 +63,7 @@ class _MainPageState extends State<MainPage> {
     final pages = [
       AccueilPage(key: ValueKey(_actualisation)),
       ComptesPage(onChanged: actualiser),
-      const PageVide(titre: 'Budgets', icone: Icons.pie_chart_outline),
+      BudgetsPage(onChanged: actualiser),
       const PageVide(titre: 'Profil', icone: Icons.person_outline),
     ];
 
@@ -121,6 +122,7 @@ class _AccueilPageState extends State<AccueilPage> {
   int soldeCourant = 0;
   int totalEpargne = 0;
   bool chargement = true;
+  int totalBudgets = 0;
 
   @override
   void initState() {
@@ -139,11 +141,19 @@ class _AccueilPageState extends State<AccueilPage> {
         .where((c) => c.type == TypeCompte.epargne)
         .fold<int>(0, (total, compte) => total + compte.solde);
 
+    final budgets = await AppDatabase.instance.obtenirBudgets();
+
+    final budgetTotal = budgets.fold<int>(
+      0,
+      (total, budget) => total + budget.montantMensuel,
+    );
+
     if (!mounted) return;
 
     setState(() {
       soldeCourant = courant;
       totalEpargne = epargne;
+      totalBudgets = budgetTotal;
       chargement = false;
     });
   }
@@ -180,7 +190,7 @@ class _AccueilPageState extends State<AccueilPage> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    formatXpf(soldeCourant),
+                    formatXpf(soldeCourant - totalBudgets),
                     style: Theme.of(context).textTheme.displaySmall?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -231,9 +241,9 @@ class _AccueilPageState extends State<AccueilPage> {
             titre: 'Charges fixes restantes',
             montant: '0 XPF',
           ),
-          const LigneReservee(
+          LigneReservee(
             titre: 'Budgets restant à consommer',
-            montant: '0 XPF',
+            montant: formatXpf(totalBudgets),
           ),
           const LigneReservee(titre: 'Épargne programmée', montant: '0 XPF'),
 
@@ -247,11 +257,15 @@ class _AccueilPageState extends State<AccueilPage> {
           ),
           const SizedBox(height: 10),
 
-          const Card(
+          Card(
             elevation: 0,
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Text('Aucun budget configuré pour le moment.'),
+            child: ListTile(
+              leading: const Icon(Icons.pie_chart_outline),
+              title: const Text('Total des enveloppes'),
+              trailing: Text(
+                formatXpf(totalBudgets),
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
           ),
         ],
