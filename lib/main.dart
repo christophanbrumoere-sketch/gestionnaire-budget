@@ -2,8 +2,14 @@ import 'package:flutter/material.dart';
 
 import 'database/app_database.dart';
 import 'models/compte.dart';
+import 'models/enveloppe_budget.dart';
+import 'models/operation_resume.dart';
+import 'models/resume_budget.dart';
 import 'screens/comptes_page.dart';
 import 'screens/budgets_page.dart';
+import 'screens/epargne_page.dart';
+import 'screens/operation_form_page.dart';
+import 'services/budget_service.dart';
 
 void main() {
   runApp(const GestionnaireBudgetApp());
@@ -36,6 +42,15 @@ class GestionnaireBudgetApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2E7D5B)),
         scaffoldBackgroundColor: const Color(0xFFF5F7F5),
       ),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF2E7D5B),
+          brightness: Brightness.dark,
+        ),
+      ),
+      themeMode: ThemeMode.system,
       home: const MainPage(),
     );
   }
@@ -102,7 +117,15 @@ class _MainPageState extends State<MainPage> {
       ),
       floatingActionButton: _pageIndex == 0
           ? FloatingActionButton.extended(
-              onPressed: () {},
+              onPressed: () async {
+                final resultat = await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const OperationFormPage(),
+                  ),
+                );
+                if (resultat == true) actualiser();
+              },
               icon: const Icon(Icons.add),
               label: const Text('Opération'),
             )
@@ -119,43 +142,61 @@ class AccueilPage extends StatefulWidget {
 }
 
 class _AccueilPageState extends State<AccueilPage> {
-  int soldeCourant = 0;
-  int totalEpargne = 0;
+  final BudgetService _budgetService = BudgetService(
+    database: AppDatabase.instance,
+  );
+
+  List<Compte> comptesCourants = [];
+  int? compteCourantId;
+  ResumeBudget resume = ResumeBudget.vide;
+  List<OperationResume> dernieresOperations = [];
+  String libellePeriode = 'Période en cours';
   bool chargement = true;
-  int totalBudgets = 0;
 
   @override
   void initState() {
     super.initState();
-    chargerSoldes();
+    chargerResume();
   }
 
-  Future<void> chargerSoldes() async {
-    final comptes = await AppDatabase.instance.obtenirComptes();
-
-    final courant = comptes
-        .where((c) => c.type == TypeCompte.courant)
-        .fold<int>(0, (total, compte) => total + compte.solde);
-
-    final epargne = comptes
-        .where((c) => c.type == TypeCompte.epargne)
-        .fold<int>(0, (total, compte) => total + compte.solde);
-
-    final budgets = await AppDatabase.instance.obtenirBudgets();
-
-    final budgetTotal = budgets.fold<int>(
-      0,
-      (total, budget) => total + budget.montantMensuel,
+  Future<void> chargerResume() async {
+    final comptes = await AppDatabase.instance.obtenirComptes(
+      type: TypeCompte.courant,
     );
+    var selection = compteCourantId;
+    if (!comptes.any((c) => c.id == selection)) {
+      selection = comptes.isEmpty ? null : comptes.first.id;
+    }
+
+    final nouveauResume = selection == null
+        ? ResumeBudget.vide
+        : await _budgetService.chargerResume(compteCourantIds: [selection]);
+    final periode = await AppDatabase.instance.obtenirPeriodeActive();
+    final operations = selection == null || periode?.id == null
+        ? <OperationResume>[]
+        : await AppDatabase.instance.obtenirDernieresOperations(
+            periodeId: periode!.id!,
+            compteCourantId: selection,
+          );
 
     if (!mounted) return;
 
     setState(() {
-      soldeCourant = courant;
-      totalEpargne = epargne;
-      totalBudgets = budgetTotal;
+      comptesCourants = comptes;
+      compteCourantId = selection;
+      resume = nouveauResume;
+      dernieresOperations = operations;
+      libellePeriode = periode == null
+          ? 'Aucune période active'
+          : 'Depuis le ${_formatDate(periode.dateDebut)}';
       chargement = false;
     });
+  }
+
+  String _formatDate(DateTime date) {
+    final jour = date.day.toString().padLeft(2, '0');
+    final mois = date.month.toString().padLeft(2, '0');
+    return '$jour/$mois/${date.year}';
   }
 
   @override
@@ -171,10 +212,37 @@ class _AccueilPageState extends State<AccueilPage> {
             ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Août 2026',
-            style: TextStyle(fontSize: 16, color: Colors.black54),
+          Text(
+            libellePeriode,
+            style: TextStyle(
+              fontSize: 16,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
+          if (comptesCourants.length > 1) ...[
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: compteCourantId,
+              decoration: const InputDecoration(
+                labelText: 'Compte courant affiché',
+              ),
+              items: comptesCourants
+                  .map(
+                    (compte) => DropdownMenuItem(
+                      value: compte.id,
+                      child: Text(compte.nom),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) async {
+                setState(() {
+                  compteCourantId = value;
+                  chargement = true;
+                });
+                await chargerResume();
+              },
+            ),
+          ],
           const SizedBox(height: 24),
 
           Card(
@@ -190,9 +258,12 @@ class _AccueilPageState extends State<AccueilPage> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    formatXpf(soldeCourant - totalBudgets),
+                    chargement ? '...' : formatXpf(resume.argentLibre),
                     style: Theme.of(context).textTheme.displaySmall?.copyWith(
                       fontWeight: FontWeight.bold,
+                      color: resume.argentLibre < 0
+                          ? Theme.of(context).colorScheme.error
+                          : null,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -212,16 +283,25 @@ class _AccueilPageState extends State<AccueilPage> {
               Expanded(
                 child: ResumeCarte(
                   titre: 'Solde courant',
-                  valeur: chargement ? '...' : formatXpf(soldeCourant),
+                  valeur: chargement ? '...' : formatXpf(resume.soldeCourant),
                   icone: Icons.account_balance,
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: ResumeCarte(
-                  titre: 'Épargnes',
-                  valeur: chargement ? '...' : formatXpf(totalEpargne),
+                  titre: 'Épargne',
+                  valeur: chargement ? '...' : formatXpf(resume.totalEpargne),
                   icone: Icons.savings_outlined,
+                  onTap: () async {
+                    await Navigator.push<void>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const EpargnePage(),
+                      ),
+                    );
+                    await chargerResume();
+                  },
                 ),
               ),
             ],
@@ -237,37 +317,109 @@ class _AccueilPageState extends State<AccueilPage> {
           ),
           const SizedBox(height: 10),
 
-          const LigneReservee(
+          LigneReservee(
             titre: 'Charges fixes restantes',
-            montant: '0 XPF',
+            montant: chargement
+                ? '...'
+                : formatXpf(resume.chargesFixesRestantes),
           ),
           LigneReservee(
-            titre: 'Budgets restant à consommer',
-            montant: formatXpf(totalBudgets),
+            titre: 'Charges variables restantes',
+            montant: chargement
+                ? '...'
+                : formatXpf(resume.chargesVariablesRestantes),
           ),
-          const LigneReservee(titre: 'Épargne programmée', montant: '0 XPF'),
+          LigneReservee(
+            titre: 'Épargne programmée',
+            montant: chargement
+                ? '...'
+                : formatXpf(resume.epargneProgrammeeRestante),
+          ),
 
           const SizedBox(height: 28),
 
           Text(
-            'Budgets',
+            'Enveloppes',
             style: Theme.of(
               context,
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 10),
 
-          Card(
-            elevation: 0,
-            child: ListTile(
-              leading: const Icon(Icons.pie_chart_outline),
-              title: const Text('Total des enveloppes'),
-              trailing: Text(
-                formatXpf(totalBudgets),
-                style: const TextStyle(fontWeight: FontWeight.bold),
+          if (!chargement && resume.enveloppes.isEmpty)
+            const Card(
+              elevation: 0,
+              child: Padding(
+                padding: EdgeInsets.all(18),
+                child: Text('Aucune enveloppe définie pour cette période.'),
+              ),
+            ),
+          ...resume.enveloppes.map(
+            (enveloppe) => Card(
+              elevation: 0,
+              color: enveloppe.montantRestant < 0
+                  ? Theme.of(context).colorScheme.errorContainer
+                  : null,
+              child: ListTile(
+                leading: Icon(
+                  enveloppe.type == TypeEnveloppeBudget.epargne
+                      ? Icons.savings_outlined
+                      : Icons.pie_chart_outline,
+                ),
+                title: Text(enveloppe.nom),
+                subtitle: Text(
+                  'Utilisé : ${formatXpf(enveloppe.montantUtilise)} / ${formatXpf(enveloppe.montantPrevu)}',
+                ),
+                trailing: Text(
+                  formatXpf(enveloppe.montantRestant),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: enveloppe.montantRestant < 0
+                        ? Theme.of(context).colorScheme.error
+                        : null,
+                  ),
+                ),
               ),
             ),
           ),
+
+          const SizedBox(height: 28),
+          Text(
+            'Dernières opérations',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          if (!chargement && dernieresOperations.isEmpty)
+            const Card(
+              elevation: 0,
+              child: Padding(
+                padding: EdgeInsets.all(18),
+                child: Text('Aucune opération sur cette période.'),
+              ),
+            ),
+          ...dernieresOperations.map((operation) {
+            final positive = operation.montantSigne >= 0;
+            return Card(
+              elevation: 0,
+              child: ListTile(
+                leading: Icon(
+                  positive ? Icons.south_west : Icons.north_east,
+                  color: positive ? Colors.green : Colors.red,
+                ),
+                title: Text(operation.libelle),
+                subtitle: Text(_formatDate(operation.date)),
+                trailing: Text(
+                  formatXpf(operation.montantSigne),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: positive ? Colors.green : Colors.red,
+                  ),
+                ),
+              ),
+            );
+          }),
         ],
       ),
     );
@@ -278,32 +430,46 @@ class ResumeCarte extends StatelessWidget {
   final String titre;
   final String valeur;
   final IconData icone;
+  final VoidCallback? onTap;
 
   const ResumeCarte({
     super.key,
     required this.titre,
     required this.valeur,
     required this.icone,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return Card(
       elevation: 0,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icone),
-            const SizedBox(height: 14),
-            Text(titre, style: const TextStyle(color: Colors.black54)),
-            const SizedBox(height: 5),
-            Text(
-              valeur,
-              style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
-            ),
-          ],
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icone),
+              const SizedBox(height: 14),
+              Text(
+                titre,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                valeur,
+                style: const TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
