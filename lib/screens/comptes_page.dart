@@ -14,6 +14,7 @@ class ComptesPage extends StatefulWidget {
 
 class _ComptesPageState extends State<ComptesPage> {
   List<Compte> comptes = [];
+  Map<int, int> soldesActuels = {};
   bool chargement = true;
 
   @override
@@ -24,11 +25,19 @@ class _ComptesPageState extends State<ComptesPage> {
 
   Future<void> chargerComptes() async {
     final resultat = await AppDatabase.instance.obtenirComptes();
+    final nouveauxSoldes = <int, int>{};
+    for (final compte in resultat) {
+      if (compte.id != null) {
+        nouveauxSoldes[compte.id!] = await AppDatabase.instance
+            .obtenirSoldeCompteActuel(compte.id!);
+      }
+    }
 
     if (!mounted) return;
 
     setState(() {
       comptes = resultat;
+      soldesActuels = nouveauxSoldes;
       chargement = false;
     });
   }
@@ -53,6 +62,7 @@ class _ComptesPageState extends State<ComptesPage> {
     final soldeController = TextEditingController(
       text: compte?.solde.toString() ?? '',
     );
+    final enveloppeInitialeController = TextEditingController();
 
     TypeCompte type = compte?.type ?? TypeCompte.courant;
 
@@ -92,7 +102,9 @@ class _ComptesPageState extends State<ComptesPage> {
                           child: Text('Épargne'),
                         ),
                       ],
-                      onChanged: (value) {
+                      onChanged: compte != null
+                          ? null
+                          : (value) {
                         if (value != null) {
                           setDialogState(() {
                             type = value;
@@ -103,14 +115,27 @@ class _ComptesPageState extends State<ComptesPage> {
                     const SizedBox(height: 16),
                     TextField(
                       controller: soldeController,
+                      readOnly: compte?.type == TypeCompte.epargne,
                       keyboardType: const TextInputType.numberWithOptions(
                         signed: true,
                       ),
                       decoration: const InputDecoration(
-                        labelText: 'Solde actuel',
+                        labelText: 'Solde initial / report',
                         suffixText: 'XPF',
                       ),
                     ),
+                    if (compte == null && type == TypeCompte.epargne) ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: enveloppeInitialeController,
+                        decoration: const InputDecoration(
+                          labelText: 'Enveloppe du solde initial',
+                          hintText: 'Ex. Précaution',
+                          helperText:
+                              'Obligatoire si le solde initial n’est pas nul',
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -133,16 +158,29 @@ class _ComptesPageState extends State<ComptesPage> {
                     if (nom.isEmpty || solde == null) {
                       return;
                     }
+                    final nomEnveloppeInitiale = enveloppeInitialeController.text
+                        .trim();
+                    if (compte == null &&
+                        type == TypeCompte.epargne &&
+                        solde != 0 &&
+                        nomEnveloppeInitiale.isEmpty) {
+                      return;
+                    }
 
                     final nouveauCompte = Compte(
                       id: compte?.id,
                       nom: nom,
                       type: type,
-                      solde: solde,
+                      soldeInitial: solde,
                     );
 
                     if (compte == null) {
-                      await AppDatabase.instance.ajouterCompte(nouveauCompte);
+                      await AppDatabase.instance.ajouterCompte(
+                        nouveauCompte,
+                        enveloppeEpargneInitiale: type == TypeCompte.epargne
+                            ? nomEnveloppeInitiale
+                            : null,
+                      );
                     } else {
                       await AppDatabase.instance.modifierCompte(nouveauCompte);
                     }
@@ -198,11 +236,11 @@ class _ComptesPageState extends State<ComptesPage> {
   Widget build(BuildContext context) {
     final totalCourant = comptes
         .where((c) => c.type == TypeCompte.courant)
-        .fold<int>(0, (total, c) => total + c.solde);
+        .fold<int>(0, (total, c) => total + (soldesActuels[c.id] ?? 0));
 
     final totalEpargne = comptes
         .where((c) => c.type == TypeCompte.epargne)
-        .fold<int>(0, (total, c) => total + c.solde);
+        .fold<int>(0, (total, c) => total + (soldesActuels[c.id] ?? 0));
 
     return SafeArea(
       child: Scaffold(
@@ -267,7 +305,7 @@ class _ComptesPageState extends State<ComptesPage> {
                               : 'Épargne',
                         ),
                         trailing: Text(
-                          formatXpf(compte.solde),
+                          formatXpf(soldesActuels[compte.id] ?? compte.solde),
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         onTap: () => ouvrirFormulaire(compte: compte),
